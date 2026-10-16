@@ -1,13 +1,23 @@
 {
   "name": "three-wasm",
-  "version": "1.0.0",
-  "description": "",
-  "main": "three.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "version": "0.1.0",
+  "description": "AssemblyScript/WASM-backed drop-in replacements for three.js math classes",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./Matrix4": "./src/Matrix4.js",
+    "./Euler": "./src/Euler.js"
   },
-  "keywords": [],
-  "author": "",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --expose-gc --test \"test/**/*.test.mjs\"",
+    "bench": "node bench/run.mjs",
+    "bench:euler": "node bench/run-euler.mjs"
+  },
   "license": "ISC",
-  "type": "commonjs"
+  "devDependencies": {
+    "assemblyscript": "0.28.20",
+    "three": "0.186.1"
+  }
 }

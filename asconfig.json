@@ -1,0 +1,15 @@
+{
+  "entries": ["assembly/index.ts"],
+  "options": {
+    "outFile": "build/math.wasm",
+    "textFile": "build/math.wat",
+    "runtime": "stub",
+    "importMemory": true,
+    "initialMemory": 1,
+    "use": ["abort="],
+    "optimizeLevel": 3,
+    "shrinkLevel": 0,
+    "noAssert": true,
+    "converge": true
+  }
+}

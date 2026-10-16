@@ -1,1 +1,3 @@
-three.js/
+node_modules
+three.js
+build/
