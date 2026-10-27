@@ -1,3 +1,4 @@
+import { BufferPool } from "./buffer-pool.js";
 import { buildInfo, wasmBase64 } from "./generated/math-wasm.js";
 
 const PAGE_BYTES = 65536;
@@ -6,13 +7,15 @@ const LIST_ENTRY_BYTES = 12;
 
 const config = Object.assign({
     matrix4Capacity: 262144, // 32 MiB of matrices
+    sortedIndexBytes: 33554432,
     multiplyListCapacity: 65536 // 768 KiB of (target, a, b) pointer triples
 }, globalThis.__THREE_WASM_CONFIG__); // set before the first import
 
 const STATIC_RESERVE = PAGE_BYTES; // static data must fit in the first page
 const matrix4Base = STATIC_RESERVE;
 const listBase = matrix4Base + config.matrix4Capacity * MATRIX4_BYTES;
-const reservedBytes = listBase + config.multiplyListCapacity * LIST_ENTRY_BYTES;
+const sortedIndexBase = Math.ceil((listBase + config.multiplyListCapacity * LIST_ENTRY_BYTES) / 16) * 16;
+const reservedBytes = sortedIndexBase + config.sortedIndexBytes;
 const pages = Math.ceil(reservedBytes / PAGE_BYTES);
 
 const memory = new WebAssembly.Memory({ initial: pages, maximum: pages }); // never grows: growing detaches retained views
@@ -108,6 +111,8 @@ const SLOT_PTR = Symbol("three-wasm.ptr");
 
 const matrix4Pool = new SlotPool("Matrix4", matrix4Base, MATRIX4_BYTES, config.matrix4Capacity);
 
+const sortedIndexPool = new BufferPool(memory, sortedIndexBase, config.sortedIndexBytes);
+
 const fallbacks = { // ops that ran in JS for lack of a WASM slot; benchmarks assert zero
     matrix4Multiply: 0
 };
@@ -119,6 +124,7 @@ function stats() {
         memoryBytes: memory.buffer.byteLength,
         reservedBytes,
         matrix4: matrix4Pool.stats(),
+        sortedIndex: sortedIndexPool.stats(),
         multiplyListCapacity: config.multiplyListCapacity,
         fallbacks: { ...fallbacks }
     };
@@ -126,4 +132,4 @@ function stats() {
 
 const listView = new Uint32Array(memory.buffer, listBase, config.multiplyListCapacity * 3);
 
-export { SLOT_PTR, SLOT_VIEW, buildInfo, config, fallbacks, kernels, listBase, listView, matrix4Pool, memory, stats };
+export { SLOT_PTR, SLOT_VIEW, buildInfo, config, fallbacks, kernels, listBase, listView, matrix4Pool, memory, sortedIndexPool, stats };

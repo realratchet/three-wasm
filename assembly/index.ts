@@ -145,3 +145,117 @@ export function m4Compose(
     store<f64>(t, pz, 112);
     store<f64>(t, 1, 120);
 }
+
+@unmanaged class SortedIndexState {
+    public count: i32;
+    public vertexCount: i32;
+    public positions: usize;
+    public triangles: usize;
+    public source: usize;
+    public vertexKeys: usize;
+    public keys: usize;
+    public order: usize;
+    public scratch: usize;
+    public indices: usize;
+}
+
+const sortCounts = memory.data(1024);
+const sortStack = memory.data(256);
+
+@inline function indexAt(ptr: usize, index: i32): i32 { return load<i32>(ptr + <usize>(index << 2)); }
+@inline function setIndex(ptr: usize, index: i32, value: i32): void { store<i32>(ptr + <usize>(index << 2), value); }
+
+// Engine FSortedIndexBuffer::Sort 1063a910; source-order ties for the non-overflow path.
+export function sortedIndexSort(keys: usize, order: usize, scratch: usize, count: i32, stable: bool): void {
+    if (count < 2) return;
+    if (stable) {
+        let source = order, target = scratch, difference: i32 = 0;
+        for (let i = 1; i < count; i++) difference |= indexAt(keys, i) ^ indexAt(keys, 0);
+        for (let shift = 0; shift < 32; shift += 8) {
+            if (!(difference >>> shift & 255)) continue;
+            memory.fill(sortCounts, 0, 1024);
+            for (let i = 0; i < count; i++) {
+                const key = ((indexAt(keys, indexAt(source, i)) ^ 0x7fffffff) >>> shift) & 255;
+                setIndex(sortCounts, key, indexAt(sortCounts, key) + 1);
+            }
+            let offset = 0;
+            for (let i = 0; i < 256; i++) { const n = indexAt(sortCounts, i); setIndex(sortCounts, i, offset); offset += n; }
+            for (let i = 0; i < count; i++) {
+                const index = indexAt(source, i), key = ((indexAt(keys, index) ^ 0x7fffffff) >>> shift) & 255, position = indexAt(sortCounts, key);
+                setIndex(target, position, index); setIndex(sortCounts, key, position + 1);
+            }
+            const swap = source; source = target; target = swap;
+        }
+        if (source != order) memory.copy(order, source, <usize>(count << 2));
+        return;
+    }
+    let top = 0; setIndex(sortStack, 0, 0); setIndex(sortStack, 1, count - 1);
+    while (top >= 0) {
+        let min = indexAt(sortStack, top * 2), max = indexAt(sortStack, top * 2 + 1); top--;
+        while (true) {
+            const length = max - min + 1;
+            if (length <= 8) {
+                while (max > min) {
+                    let selected = min, selectedKey = indexAt(keys, indexAt(order, min));
+                    for (let item = min + 1; item <= max; item++) {
+                        const key = indexAt(keys, indexAt(order, item));
+                        if (selectedKey - key > 0) { selected = item; selectedKey = key; }
+                    }
+                    const swap = indexAt(order, selected); setIndex(order, selected, indexAt(order, max)); setIndex(order, max--, swap);
+                }
+                break;
+            }
+            const middle = min + (length >> 1), swap = indexAt(order, middle); setIndex(order, middle, indexAt(order, min)); setIndex(order, min, swap);
+            const pivot = indexAt(order, min), pivotKey = indexAt(keys, pivot);
+            let first = min, last = max + 1;
+            while (true) {
+                do { first++; } while (first <= max && pivotKey - indexAt(keys, indexAt(order, first)) <= 0);
+                do { last--; } while (last > min && pivotKey - indexAt(keys, indexAt(order, last)) >= 0);
+                if (first > last) break;
+                const swap = indexAt(order, first); setIndex(order, first, indexAt(order, last)); setIndex(order, last, swap);
+            }
+            setIndex(order, min, indexAt(order, last)); setIndex(order, last, pivot);
+            if (last - 1 - min >= max - first) {
+                if (min + 1 < last) { top++; setIndex(sortStack, top * 2, min); setIndex(sortStack, top * 2 + 1, last - 1); }
+                if (max > first) { min = first; continue; }
+            } else {
+                if (max > first) { top++; setIndex(sortStack, top * 2, first); setIndex(sortStack, top * 2 + 1, max); }
+                if (min + 1 < last) { max = last - 1; continue; }
+            }
+            break;
+        }
+    }
+}
+
+// Engine FSortedIndexBuffer::GetContents 1063a635.
+export function sortedIndexApply(ptr: usize, cameraX: f32, cameraY: f32, cameraZ: f32, entering: bool): bool {
+    const state = changetype<SortedIndexState>(ptr);
+    const count = state.count, vertexCount = state.vertexCount, positions = state.positions, triangles = state.triangles, source = state.source, vertexKeys = state.vertexKeys, keys = state.keys, order = state.order, scratch = state.scratch, indices = state.indices;
+    for (let i = 0; i < vertexCount; i++) {
+        const position = positions + <usize>(i * 12), x: f32 = load<f32>(position) - cameraX, y: f32 = load<f32>(position, 4) - cameraY, z: f32 = load<f32>(position, 8) - cameraZ;
+        const dx = <f64>x, dy = <f64>y, dz = <f64>z, distance = <f32>(dx * dx + dy * dy + dz * dz);
+        setIndex(vertexKeys, i, distance >= 2147483648 || distance != distance ? i32.MIN_VALUE : <i32>nearest(distance));
+    }
+    let min = i32.MAX_VALUE, max = i32.MIN_VALUE, unchanged = !entering;
+    for (let i = 0; i < count; i++) {
+        const offset = i * 3;
+        let key = indexAt(vertexKeys, indexAt(triangles, offset));
+        const second = indexAt(vertexKeys, indexAt(triangles, offset + 1)), third = indexAt(vertexKeys, indexAt(triangles, offset + 2));
+        if (second > key) key = second;
+        if (third > key) key = third;
+        setIndex(keys, i, key);
+        if (key < min) min = key;
+        if (key > max) max = key;
+    }
+    for (let i = 1; i < count && unchanged; i++) {
+        const a = indexAt(order, i - 1), b = indexAt(order, i);
+        if (indexAt(keys, a) < indexAt(keys, b) || (indexAt(keys, a) == indexAt(keys, b) && a > b)) unchanged = false;
+    }
+    if (!unchanged || <f64>max - <f64>min >= 2147483648) {
+        for (let i = 0; i < count; i++) setIndex(order, i, i);
+        sortedIndexSort(keys, order, scratch, count, <f64>max - <f64>min < 2147483648);
+        for (let i = 0; i < count; i++) for (let vertex = 0; vertex < 3; vertex++) setIndex(indices, i * 3 + vertex, indexAt(source, indexAt(order, i) * 3 + vertex));
+        return true;
+    }
+    return false;
+}

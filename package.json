@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.js",
     "./Matrix4": "./src/Matrix4.js",
-    "./Euler": "./src/Euler.js"
+    "./Euler": "./src/Euler.js",
+    "./SortedIndexBuffer": "./src/SortedIndexBuffer.js"
   },
   "scripts": {
     "build": "node scripts/build.mjs",
